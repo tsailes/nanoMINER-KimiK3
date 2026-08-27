@@ -1,0 +1,5 @@
+{
+  "profile_id": "pe_crystal",
+  "title": "Polyethylene crystal literature evidence extraction",
+  "instructions": "Extract only source-grounded polyethylene or PE-analogue crystal evidence. Prioritize paper metadata; polymer and sample identity; preparation and treatment conditions; diffraction, microscopy, DSC, SAXS, WAXS, XRD, and neutron methods; crystal system and space_group_raw; source-reported unit-cell axes and angles with exact units; atom coordinates and their coordinate convention; diffraction peaks; phase, orientation, morphology, and thermal observations; and explicit missing items relevant to CIF reconstruction. Keep source axis labels exactly as reported. Do not normalize unit-cell axes, transform space groups, generate atom positions, infer a crystal system from familiarity, or decide CIF/gold readiness. A generic particle dimension is not a unit-cell axis unless the source explicitly says so. Every candidate remains needs_review."
+}

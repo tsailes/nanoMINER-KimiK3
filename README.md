@@ -1,87 +1,125 @@
-# nanoMINER: Multimodal Information Extraction for Nanomaterials
+# nanoMINER corrected reproduction: Kimi K3 core
 
-This repository contains a cutting-edge multi-agent system that integrates large language models with multimodal analysis to extract crucial information on nanomaterials from research articles. 
+This branch reproduces the useful nanoMINER workflow while correcting the parts
+that prevent reliable scientific extraction. It is based on upstream commit
+`94dbab2` and runs the coordinating agent and visual analyst on `kimi-k3`.
 
-This system processes scientific documents end-to-end, leveraging tools such as the YOLO model for visual data extraction and GPT-4o for linking textual and visual information. The core of our architecture is the ReAct agent, which orchestrates various specialized agents, ensuring comprehensive and accurate data extraction. We demonstrate its efficacy through a case study in nanozyme research.
+The active implementation is the `nanominer_k3` package under `src/`.
+Upstream notebooks plus `llm-extraction/`, `graph_processing/`, and
+`data_preproccessing/` remain as non-installed comparison artifacts; they are
+not part of the corrected runtime. The two documented upstream entry points
+now call the K3 implementation.
 
-## Features
+## What changed
 
-- Upload and process PDF files of scientific articles and supplementary information
-- Extract text from PDF files
-- Utilize an AI agent to answer questions about the uploaded articles
-- Handle multiple file uploads, including separate article and supplement files
+- Replaced the legacy LangChain text-ReAct loop with native Kimi K3 tool calls.
+- Preserves the complete assistant message across tool turns, as K3 requires.
+- Omits fixed sampling parameters that K3 rejects.
+- Separates evidence collection from strict JSON-schema finalization.
+- Preserves real 1-based PDF page numbers and never truncates the References
+  section.
+- Uses Kimi K3 native vision for tables, figures, and scan-only pages.
+- Forces all generated records to `needs_review` in program code.
+- Does not log API keys or model reasoning.
+- Emits metadata-only progress events during long K3/tool calls.
+- Validates cited roles/pages and flags numeric/OCR disagreements for review.
+- Keeps PE-crystal output out of `gold/` and the main annotation tables.
 
-## Installation
+Two extraction profiles are included:
 
-1. Clone this repository:
+- `pe_crystal` for this project's polyethylene crystal literature workflow.
+- `nanozyme` for a corrected reproduction of the upstream case study.
 
-```bash
-git clone https://github.com/ai-chem/LLM-Pipeline-for-Automated-Extraction-of-Nanozyme-Data.git
-cd LLM-Pipeline-for-Automated-Extraction-of-Nanozyme-Data
+## Install
+
+Python 3.10 through 3.13 is supported.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e ".[test]"
+$env:KIMI_API_KEY = "your-key"
 ```
 
-2. Install the required packages:
+The core model is intentionally pinned to `kimi-k3`. Configuration variables
+are documented in `.env.example`; the program does not automatically read a
+local `.env` file.
 
-```bash
-poetry install
+The default service is the China Open Platform that matches keys created at
+<https://platform.kimi.com/console/projects/api-keys>:
+
+- Base URL: `https://api.moonshot.cn/v1`
+- Model ID: `kimi-k3`
+
+Global Open Platform accounts may explicitly set `KIMI_BASE_URL` to
+`https://api.moonshot.ai/v1`. Kimi Code membership keys are a separate product;
+they require `https://api.kimi.com/coding/v1` and model ID `k3`.
+For credential safety, the runtime rejects non-official API base URLs.
+
+Run the offline checks:
+
+```powershell
+.\.venv\Scripts\python -m pytest
+.\.venv\Scripts\python -m nanominer_k3 doctor
 ```
-This command will install all necessary dependencies from pyproject.toml file using poetry package manager.
 
-3. Set up your OpenAI API key in a .env file:
+Optional Streamlit app:
 
-```bash
-OPENAI_API_KEY=your_api_key_here
+```powershell
+.\.venv\Scripts\python -m pip install -e ".[app]"
+.\.venv\Scripts\python -m streamlit run agent_app.py
 ```
 
-## Usage
+## Extract one PE-crystal paper
 
-### Agent app
+Candidate output must go to the source-group staging area, never directly to
+`annotations/*.jsonl`, `annotations/gold/`, or an external `gold/gN` PDF folder.
 
-1. Run the Streamlit app:
+From this repository:
 
-```bash
-poetry run streamlit run agent_app.py
+```powershell
+.\.venv\Scripts\python -m nanominer_k3 extract `
+  "C:\path\to\article.pdf" `
+  --profile pe_crystal `
+  --output "..\..\annotations\source_groups\gN\nanominer_kimi_k3\runs\RUN_ID\candidate_extraction.json"
 ```
 
-2. Open the provided URL in your web browser.
+Add `--supplement C:\path\to\supplement.pdf` when needed. Add `--no-vision`
+only for a text-only diagnostic run; scan-only PDFs require vision.
+Use `--prompt-key` to enter a key through a hidden terminal prompt instead of
+placing it in an environment variable or command-line argument.
 
-3. Upload a PDF file of a scientific article (and optionally, a supplementary information file).
+For a directory pilot, use a separate fresh K3 conversation per article:
 
-4. Once the files are processed, you can start asking questions about the article in the chat interface.
+```powershell
+.\.venv\Scripts\python -m nanominer_k3 batch "C:\path\to\articles" `
+  --supplements-dir "C:\path\to\supplements" `
+  --profile pe_crystal `
+  --limit 4 `
+  --output-dir "..\..\annotations\source_groups\gN\nanominer_kimi_k3\runs\RUN_ID"
+```
 
-### Auto extraction
+`doctor` reports key presence without printing the key. Live contract tests are
+opt-in and always read credentials from a hidden prompt.
 
-The auto_extraction.py script is designed for batch processing of PDF files to extract detailed information about nanozyme experiments. It uses a multi-agent system to analyze scientific articles and supplementary information files, extracting named entities and other relevant data.
+## Scientific curation boundary
 
-- To run the script, use the following command:
+The output is a provenance-first staging object, not a PE database row. The
+model does not generate record IDs, normalize crystal settings, declare CIF
+readiness, or promote records. A separate deterministic adapter and validation
+step must map reviewed candidates into the project's schemas.
 
-    ```bash
-    python auto_extraction.py <pdf_articles_dir> <pdf_supplements_dir> <ner_json_dir> <results_dir>
-    ```
-    Where:
-    - **pdf_articles_dir**: Directory containing the PDF articles.
-    - **pdf_supplements_dir**: Directory containing the supplementary PDF files.
-    - **ner_json_dir**: Directory containing the JSON files with named entity recognition (NER) data.
-    - **results_dir**: Directory where the results will be saved.
+Recommended first regression set:
 
-### Structured Output
+1. BUNN1939: positive crystallographic record.
+2. SHEARER1954: must remain `needs_review`.
+3. SMITH1980: negative/non-target boundary.
+4. One image-only g3 PDF: OCR/vision stress case.
 
-The structured_output.ipynb Jupyter Notebook is designed for converting the markdown ReAct agent's answers into structured tabular data. This notebook also contains the calculation of the Jaccard Index on the full dataset.
+See `docs/REPRODUCTION_AND_CORRECTIONS.md` for the audit and next phases.
 
-## File Structure
+## Upstream and licensing note
 
-- agent_app.py: Main Streamlit application file;
-- auto_extraction.py: Script for automated extraction of information from multiple PDF files;
-- structured_output.ipynb: Jupyter Notebook for structured output postprocessing and calculation of the Jaccard Index.
-- pdf2txt.py: Module for extracting text from PDF files;
-- utils.py: Utility functions;
-- logger.py: Logging configuration;
-- image_processing/: Directory containing image processing modules.
+Upstream: <https://github.com/ai-chem/nanoMINER>
 
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
+The upstream README says MIT, but commit `94dbab2` does not contain a LICENSE
+file. Confirm redistribution terms before publishing a fork or packaged build.

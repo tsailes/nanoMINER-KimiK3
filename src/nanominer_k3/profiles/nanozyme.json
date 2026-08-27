@@ -1,0 +1,5 @@
+{
+  "profile_id": "nanozyme",
+  "title": "Nanozyme kinetic experiment extraction",
+  "instructions": "Reproduce the original nanoMINER nanozyme use case with corrected evidence handling. Create a separate record for every nanoparticle, activity, substrate/co-substrate assignment, and assay condition. Extract formula, activity, crystal system as explicitly reported, dimensions, surface chemistry, synthesis polymer and surfactant, coating molar mass, Km, Vmax, reaction type, varied-substrate concentration range, fixed co-substrate concentration, catalyst concentration, pH, and temperature. Preserve source units and distinguish which substrate was varied. Do not default missing surface chemistry to naked or missing reagents to none. Do not infer values. Every record needs page-level text, table, or figure evidence and remains needs_review."
+}
