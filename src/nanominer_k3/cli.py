@@ -14,6 +14,7 @@ from .config import ConfigurationError, KimiSettings
 from .documents import DocumentCorpus, PdfDocument
 from .pipeline import run_extraction
 from .profiles import load_profile
+from .screening import screen_directory
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,11 +58,46 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--no-vision", action="store_true")
     batch.add_argument("--limit", type=int)
     batch.add_argument(
+        "--screening-manifest",
+        type=Path,
+        help="Only extract PDFs marked final_decision=keep by the local screener",
+    )
+    batch.add_argument(
         "--prompt-key",
         action="store_true",
         help="Read the API key from a hidden prompt instead of the environment",
     )
     batch.set_defaults(func=_batch)
+
+    screen = subparsers.add_parser(
+        "screen",
+        help="Locally screen complete PDF text for core crystallographic evidence",
+    )
+    screen.add_argument("pdf_dir", type=Path)
+    screen.add_argument("--output-dir", type=Path, required=True)
+    screen.add_argument(
+        "--ocr-sparse-pages",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Use local Tesseract OCR on pages with little or no native text",
+    )
+    screen.add_argument("--ocr-language", default="eng")
+    screen.add_argument("--ocr-dpi", type=int, default=150)
+    screen.add_argument("--limit", type=int)
+    screen.add_argument(
+        "--resume", action=argparse.BooleanOptionalAction, default=True
+    )
+    screen.add_argument(
+        "--copy-partitions",
+        action="store_true",
+        help="Copy PDFs into 通过 and 未通过 while preserving originals",
+    )
+    screen.add_argument(
+        "--partition-root",
+        type=Path,
+        help="Parent for 通过 and 未通过 (defaults to pdf_dir)",
+    )
+    screen.set_defaults(func=_screen)
     return parser
 
 
@@ -122,10 +158,29 @@ def _batch(args: argparse.Namespace) -> int:
         output_dir=output_dir,
         enable_vision=not args.no_vision,
         limit=args.limit,
+        screening_manifest=args.screening_manifest,
         progress_handler=_progress,
     )
     print(json.dumps(summary.as_dict(), ensure_ascii=False, indent=2))
     return 0 if not summary.failed else 1
+
+
+def _screen(args: argparse.Namespace) -> int:
+    summary = screen_directory(
+        pdf_dir=args.pdf_dir,
+        output_dir=args.output_dir,
+        ocr_sparse_pages=args.ocr_sparse_pages,
+        ocr_language=args.ocr_language,
+        ocr_dpi=args.ocr_dpi,
+        limit=args.limit,
+        resume=args.resume,
+        reviewer=None,
+        partition_root=args.partition_root,
+        copy_partitions=args.copy_partitions,
+        progress_handler=_progress,
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
 
 
 def _guard_output_path(output: Path, profile_id: str) -> None:

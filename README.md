@@ -69,6 +69,46 @@ Optional Streamlit app:
 .\.venv\Scripts\python -m streamlit run agent_app.py
 ```
 
+## Local full-PDF screening (no Kimi call)
+
+Run the deterministic first-pass screen before K3 extraction:
+
+```powershell
+.\.venv\Scripts\python -m nanominer_k3 screen `
+  "C:\Users\CAI\Desktop\pdfs" `
+  --output-dir "C:\Users\CAI\Desktop\PE_Crystal_Silver_v0_1_calibration\annotations\source_groups\library_screening\20260830_fulltext" `
+  --ocr-sparse-pages `
+  --copy-partitions
+```
+
+This command reads every page locally. Tesseract is used only for sparse,
+image-only, or broken-font pages; no Kimi/API configuration is read. It keeps
+a paper only when the body provides primary-work evidence for parseable atomic
+coordinates, or for both a valid
+space group and a numeric a/b/c unit cell. Generic terms such as `crystal
+structure`, crystal system, XRD/WAXS, (hkl), and orientation do not pass by
+themselves. Reviews, imported simulation inputs, compound theses, reference-only
+hits, and damaged/unverified OCR are rejected or held for review.
+
+With `--copy-partitions`, originals stay at the top level of `pdfs`; classified
+copies go to `pdfs\通过` and `pdfs\未通过`. `needs_review` is deliberately placed
+in `未通过` and remains distinguishable in `screening_manifest.jsonl`. Detailed
+CSV/JSONL evidence and Chinese lists are written to the output directory, not
+mixed into the source-PDF library. The screen is evidence-based and does not
+silently impose a material-name filter.
+
+See `docs/FULLTEXT_SCREENING.md` for the decision matrix, OCR quality gates,
+resume semantics, calibration controls, and output schema.
+
+Use the resulting allow-list for a later K3 batch:
+
+```powershell
+.\.venv\Scripts\python -m nanominer_k3 batch "C:\Users\CAI\Desktop\pdfs" `
+  --screening-manifest "C:\path\to\screening_manifest.jsonl" `
+  --profile pe_crystal `
+  --output-dir "C:\path\to\staging-run"
+```
+
 ## Extract one PE-crystal paper
 
 Candidate output must go to the source-group staging area, never directly to

@@ -11,6 +11,7 @@ from .config import KimiSettings
 from .documents import DocumentCorpus, PdfDocument
 from .pipeline import run_extraction
 from .profiles import ExtractionProfile
+from .screening import load_kept_relative_paths
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,15 +68,25 @@ def run_batch(
     output_dir: Path,
     enable_vision: bool,
     limit: int | None = None,
+    screening_manifest: Path | None = None,
     progress_handler: ProgressHandler | None = None,
 ) -> BatchResult:
-    articles = discover_pdfs(articles_dir)
+    articles_root = articles_dir.expanduser().resolve()
+    articles = discover_pdfs(articles_root)
+    if screening_manifest is not None:
+        kept_paths = load_kept_relative_paths(screening_manifest)
+        articles = [
+            article
+            for article in articles
+            if article.relative_to(articles_root).as_posix().casefold() in kept_paths
+        ]
     if limit is not None:
         if limit < 1:
             raise ValueError("Batch limit must be positive")
         articles = articles[:limit]
     if not articles:
-        raise ValueError(f"No PDF files found in {articles_dir}")
+        suffix = " after applying the screening manifest" if screening_manifest else ""
+        raise ValueError(f"No PDF files found in {articles_dir}{suffix}")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     outputs: list[str] = []

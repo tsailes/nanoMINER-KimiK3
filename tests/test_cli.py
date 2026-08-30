@@ -44,3 +44,18 @@ class OutputBoundaryTests(TestCase):
                 Path("C:/data/gold/g1/candidate.json").resolve(),
                 "pe_crystal",
             )
+
+    def test_local_screen_command_needs_no_api_key_option(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "screen",
+                "pdfs",
+                "--output-dir",
+                "screening-output",
+                "--ocr-sparse-pages",
+                "--copy-partitions",
+            ]
+        )
+        self.assertTrue(args.ocr_sparse_pages)
+        self.assertTrue(args.copy_partitions)
+        self.assertFalse(hasattr(args, "prompt_key"))
