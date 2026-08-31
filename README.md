@@ -100,11 +100,27 @@ silently impose a material-name filter.
 See `docs/FULLTEXT_SCREENING.md` for the decision matrix, OCR quality gates,
 resume semantics, calibration controls, and output schema.
 
+After page-level review of every `needs_review` item, apply the completed JSONL
+review files without changing the deterministic baseline manifest:
+
+```powershell
+.\.venv\Scripts\python -m nanominer_k3 review-apply `
+  --manifest "C:\path\to\screening_manifest.jsonl" `
+  --reviews "C:\path\to\review_part_1.jsonl" "C:\path\to\review_part_2.jsonl" `
+  --output-dir "C:\path\to\reviewed" `
+  --copy-partitions --pdf-dir "C:\path\to\pdfs"
+```
+
+This command accepts overrides only for baseline `needs_review` records,
+requires a complete unique review set, and writes a separate reviewed manifest,
+Chinese report/CSV/lists, and auditable page evidence before refreshing the two
+copy-only folders.
+
 Use the resulting allow-list for a later K3 batch:
 
 ```powershell
 .\.venv\Scripts\python -m nanominer_k3 batch "C:\Users\CAI\Desktop\pdfs" `
-  --screening-manifest "C:\path\to\screening_manifest.jsonl" `
+  --screening-manifest "C:\path\to\reviewed\screening_manifest.reviewed.jsonl" `
   --profile pe_crystal `
   --output-dir "C:\path\to\staging-run"
 ```

@@ -58,11 +58,33 @@ being safely excluded.
 Interrupted runs write `screening_manifest.partial.jsonl`. `--resume` reuses a
 record only when schema version, file size, mtime, and OCR mode still match.
 
+## Applying a completed local review
+
+Keep the deterministic manifest unchanged and apply page-checked review records
+as a separate layer:
+
+```powershell
+nanominer-k3 review-apply `
+  --manifest C:\path\to\screening_manifest.jsonl `
+  --reviews C:\path\to\agent_01.jsonl C:\path\to\agent_02.jsonl `
+  --output-dir C:\path\to\codex_reviewed `
+  --copy-partitions `
+  --pdf-dir C:\path\to\pdfs `
+  --partition-root C:\path\to\pdfs
+```
+
+The command only permits overrides of baseline `needs_review` records. A
+`keep` override must identify primary ownership and include page evidence. It
+requires a complete, unique review set; writes a reviewed manifest, review
+overrides, Chinese CSV/lists/report, and preserves the baseline manifest.
+
 ## Safety and reuse
 
 `--copy-partitions` copies files and preserves the top-level originals. It
-checks every resolved source/target path and available free space before the
-first copy. Existing targets are reused only when their byte size matches.
+checks every resolved source/target path, source size, source SHA-256, and
+available free space before the first copy. Missing or changed source PDFs stop
+the run. Existing targets are reused only when their byte size and recorded
+SHA-256 match.
 Generated evidence stays in the project's `annotations/source_groups/` area,
 separate from source PDFs and Gold annotations.
 
@@ -70,7 +92,7 @@ For later extraction, pass the allow-list explicitly:
 
 ```powershell
 nanominer-k3 batch C:\path\to\pdfs `
-  --screening-manifest C:\path\to\screening_manifest.jsonl `
+  --screening-manifest C:\path\to\codex_reviewed\screening_manifest.reviewed.jsonl `
   --profile pe_crystal `
   --output-dir C:\path\to\staging
 ```

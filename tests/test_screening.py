@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 from pathlib import Path
@@ -26,6 +27,15 @@ def _write_pdf(path: Path, pages: list[str]) -> None:
         )
     document.save(path)
     document.close()
+
+
+def _partition_record(path: Path, decision: str) -> dict[str, object]:
+    return {
+        "relative_path": path.name,
+        "final_decision": decision,
+        "source_size_bytes": path.stat().st_size,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
 
 
 class FullTextScreeningTests(TestCase):
@@ -168,8 +178,8 @@ class PartitionTests(TestCase):
             _write_pdf(passed, ["Readable source. " * 20])
             _write_pdf(failed, ["Readable source. " * 20])
             records = [
-                {"relative_path": passed.name, "final_decision": "keep"},
-                {"relative_path": failed.name, "final_decision": "needs_review"},
+                _partition_record(passed, "keep"),
+                _partition_record(failed, "needs_review"),
             ]
             summary = materialize_two_folders(
                 records=records,
@@ -187,8 +197,8 @@ class PartitionTests(TestCase):
                 [path.name for path in discover_pdf_files(root)],
             )
             reversed_records = [
-                {"relative_path": passed.name, "final_decision": "exclude"},
-                {"relative_path": failed.name, "final_decision": "keep"},
+                _partition_record(passed, "exclude"),
+                _partition_record(failed, "keep"),
             ]
             refreshed = materialize_two_folders(
                 records=reversed_records,

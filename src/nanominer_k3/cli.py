@@ -14,6 +14,7 @@ from .config import ConfigurationError, KimiSettings
 from .documents import DocumentCorpus, PdfDocument
 from .pipeline import run_extraction
 from .profiles import load_profile
+from .review import apply_fulltext_reviews
 from .screening import screen_directory
 
 
@@ -98,6 +99,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Parent for 通过 and 未通过 (defaults to pdf_dir)",
     )
     screen.set_defaults(func=_screen)
+
+    review_apply = subparsers.add_parser(
+        "review-apply",
+        help="Apply completed local full-text reviews to a screening manifest",
+    )
+    review_apply.add_argument("--manifest", type=Path, required=True)
+    review_apply.add_argument("--reviews", type=Path, nargs="+", required=True)
+    review_apply.add_argument("--output-dir", type=Path, required=True)
+    review_apply.add_argument("--copy-partitions", action="store_true")
+    review_apply.add_argument("--pdf-dir", type=Path)
+    review_apply.add_argument("--partition-root", type=Path)
+    review_apply.set_defaults(func=_review_apply)
     return parser
 
 
@@ -178,6 +191,19 @@ def _screen(args: argparse.Namespace) -> int:
         partition_root=args.partition_root,
         copy_partitions=args.copy_partitions,
         progress_handler=_progress,
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _review_apply(args: argparse.Namespace) -> int:
+    summary = apply_fulltext_reviews(
+        manifest_path=args.manifest,
+        review_paths=args.reviews,
+        output_dir=args.output_dir,
+        pdf_dir=args.pdf_dir,
+        partition_root=args.partition_root,
+        copy_partitions=args.copy_partitions,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0

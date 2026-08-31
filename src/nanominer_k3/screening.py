@@ -549,6 +549,11 @@ def materialize_two_folders(
     Non-keep decisions, including needs_review and read errors, go to 未通过.
     Original PDFs are never moved or deleted by this function.
     """
+    materialized = list(records)
+    source_validation = validate_partition_sources(
+        records=materialized, pdf_dir=pdf_dir
+    )
+
     source_root = pdf_dir.expanduser().resolve()
     target_root = partition_root.expanduser().resolve()
     target_root.mkdir(parents=True, exist_ok=True)
@@ -559,7 +564,6 @@ def materialize_two_folders(
     ):
         raise ValueError("Screening partition paths escaped their target root")
 
-    materialized = list(records)
     missing_bytes = 0
     for record in materialized:
         source = (source_root / str(record["relative_path"])).resolve()
@@ -567,7 +571,7 @@ def materialize_two_folders(
         target = (target_base / str(record["relative_path"])).resolve()
         if not source.is_relative_to(source_root) or not target.is_relative_to(target_base):
             raise ValueError("A screening record resolved outside its expected root")
-        if not target.exists() and source.is_file():
+        if not target.exists():
             missing_bytes += source.stat().st_size
     free_bytes = shutil.disk_usage(target_root).free
     if free_bytes < missing_bytes + 256 * 1024 * 1024:
@@ -580,6 +584,7 @@ def materialize_two_folders(
     reused = 0
     failed = 0
     stale_opposite_removed = 0
+    target_hashes_verified = 0
     for index, record in enumerate(materialized, start=1):
         source = (source_root / str(record["relative_path"])).resolve()
         target_base = passed_root if record.get("final_decision") == "keep" else failed_root
@@ -589,9 +594,6 @@ def materialize_two_folders(
         if not opposite.is_relative_to(opposite_base):
             raise ValueError("An opposite partition path escaped its expected root")
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not source.is_file():
-            failed += 1
-            continue
         if target.exists():
             expected_sha = str(record.get("sha256", ""))
             target_matches = target.stat().st_size == source.stat().st_size
@@ -599,6 +601,8 @@ def materialize_two_folders(
                 target_matches = _sha256(target) == expected_sha
             if target_matches:
                 reused += 1
+                if expected_sha:
+                    target_hashes_verified += 1
             else:
                 raise ValueError(
                     f"Partition target already exists with different content: {target}"
@@ -606,6 +610,13 @@ def materialize_two_folders(
         else:
             shutil.copy2(source, target)
             copied += 1
+            expected_sha = str(record.get("sha256", ""))
+            if expected_sha:
+                if _sha256(target) != expected_sha:
+                    raise ValueError(
+                        f"Copied partition target failed SHA-256 verification: {target}"
+                    )
+                target_hashes_verified += 1
             _emit(
                 progress_handler,
                 "partition_file_copied",
@@ -637,6 +648,65 @@ def materialize_two_folders(
         "reused": reused,
         "stale_opposite_removed": stale_opposite_removed,
         "missing_sources": failed,
+        "source_files_validated": source_validation["sources_validated"],
+        "source_hashes_verified": source_validation["source_hashes_checked"],
+        "target_hashes_verified": target_hashes_verified,
+    }
+
+
+def validate_partition_sources(
+    *, records: Iterable[Mapping[str, Any]], pdf_dir: Path
+) -> dict[str, Any]:
+    """Require every source PDF to match its recorded size and SHA before copying."""
+    source_root = pdf_dir.expanduser().resolve()
+    if not source_root.is_dir():
+        raise ValueError(f"PDF source directory not found: {source_root}")
+
+    materialized = list(records)
+    seen: set[str] = set()
+    total_bytes = 0
+    hashes_checked = 0
+    for record in materialized:
+        relative_path = str(record.get("relative_path", ""))
+        if not relative_path:
+            raise ValueError("A partition record is missing relative_path")
+        key = relative_path.replace("\\", "/").casefold()
+        if key in seen:
+            raise ValueError(f"Duplicate partition relative_path: {relative_path}")
+        seen.add(key)
+
+        source = (source_root / relative_path).resolve()
+        if not source.is_relative_to(source_root):
+            raise ValueError(f"A PDF source resolved outside its root: {relative_path}")
+        if not source.is_file():
+            raise ValueError(f"PDF source file not found: {source}")
+
+        stat = source.stat()
+        expected_size = record.get("source_size_bytes")
+        if not isinstance(expected_size, int) or isinstance(expected_size, bool):
+            raise ValueError(
+                f"Missing or invalid source_size_bytes for {relative_path}: "
+                f"{expected_size}"
+            )
+        if stat.st_size != expected_size:
+            raise ValueError(
+                f"PDF source size differs from the manifest: {relative_path}"
+            )
+
+        expected_sha = str(record.get("sha256", "")).strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
+            raise ValueError(f"Missing or invalid SHA-256 for {relative_path}")
+        if _sha256(source) != expected_sha:
+            raise ValueError(
+                f"PDF source SHA-256 differs from the manifest: {relative_path}"
+            )
+        hashes_checked += 1
+        total_bytes += stat.st_size
+
+    return {
+        "sources_validated": len(materialized),
+        "source_hashes_checked": hashes_checked,
+        "source_bytes": total_bytes,
     }
 
 
