@@ -16,6 +16,7 @@ from .pipeline import run_extraction
 from .profiles import load_profile
 from .review import apply_fulltext_reviews
 from .screening import screen_directory
+from .structure_review import apply_structure_relevance_reviews
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -111,6 +112,23 @@ def build_parser() -> argparse.ArgumentParser:
     review_apply.add_argument("--pdf-dir", type=Path)
     review_apply.add_argument("--partition-root", type=Path)
     review_apply.set_defaults(func=_review_apply)
+
+    structure_review_apply = subparsers.add_parser(
+        "structure-review-apply",
+        help=(
+            "Apply recall-oriented crystal-structure relevance reviews to "
+            "strict exclusions"
+        ),
+    )
+    structure_review_apply.add_argument("--manifest", type=Path, required=True)
+    structure_review_apply.add_argument(
+        "--reviews", type=Path, nargs="+", required=True
+    )
+    structure_review_apply.add_argument("--output-dir", type=Path, required=True)
+    structure_review_apply.add_argument("--copy-partitions", action="store_true")
+    structure_review_apply.add_argument("--pdf-dir", type=Path)
+    structure_review_apply.add_argument("--partition-root", type=Path)
+    structure_review_apply.set_defaults(func=_structure_review_apply)
     return parser
 
 
@@ -198,6 +216,19 @@ def _screen(args: argparse.Namespace) -> int:
 
 def _review_apply(args: argparse.Namespace) -> int:
     summary = apply_fulltext_reviews(
+        manifest_path=args.manifest,
+        review_paths=args.reviews,
+        output_dir=args.output_dir,
+        pdf_dir=args.pdf_dir,
+        partition_root=args.partition_root,
+        copy_partitions=args.copy_partitions,
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _structure_review_apply(args: argparse.Namespace) -> int:
+    summary = apply_structure_relevance_reviews(
         manifest_path=args.manifest,
         review_paths=args.reviews,
         output_dir=args.output_dir,

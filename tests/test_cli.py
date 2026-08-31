@@ -59,3 +59,23 @@ class OutputBoundaryTests(TestCase):
         self.assertTrue(args.ocr_sparse_pages)
         self.assertTrue(args.copy_partitions)
         self.assertFalse(hasattr(args, "prompt_key"))
+
+    def test_structure_review_command_needs_no_api_key_option(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "structure-review-apply",
+                "--manifest",
+                "manifest.jsonl",
+                "--reviews",
+                "part-1.jsonl",
+                "part-2.jsonl",
+                "--output-dir",
+                "structure-reviewed",
+                "--copy-partitions",
+                "--pdf-dir",
+                "pdfs",
+            ]
+        )
+        self.assertEqual([Path("part-1.jsonl"), Path("part-2.jsonl")], args.reviews)
+        self.assertTrue(args.copy_partitions)
+        self.assertFalse(hasattr(args, "prompt_key"))

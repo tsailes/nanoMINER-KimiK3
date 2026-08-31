@@ -6,6 +6,7 @@ import json
 import math
 import re
 import shutil
+import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -564,75 +565,177 @@ def materialize_two_folders(
     ):
         raise ValueError("Screening partition paths escaped their target root")
 
-    missing_bytes = 0
-    for record in materialized:
-        source = (source_root / str(record["relative_path"])).resolve()
-        target_base = passed_root if record.get("final_decision") == "keep" else failed_root
-        target = (target_base / str(record["relative_path"])).resolve()
-        if not source.is_relative_to(source_root) or not target.is_relative_to(target_base):
-            raise ValueError("A screening record resolved outside its expected root")
-        if not target.exists():
-            missing_bytes += source.stat().st_size
-    free_bytes = shutil.disk_usage(target_root).free
-    if free_bytes < missing_bytes + 256 * 1024 * 1024:
-        raise ValueError(
-            "Insufficient free space for reversible PDF partition copies: "
-            f"need at least {missing_bytes + 256 * 1024 * 1024} bytes"
-        )
-
-    copied = 0
-    reused = 0
-    failed = 0
-    stale_opposite_removed = 0
-    target_hashes_verified = 0
+    plans: list[dict[str, Any]] = []
+    staged_copy_bytes = 0
     for index, record in enumerate(materialized, start=1):
         source = (source_root / str(record["relative_path"])).resolve()
         target_base = passed_root if record.get("final_decision") == "keep" else failed_root
         opposite_base = failed_root if target_base == passed_root else passed_root
         target = (target_base / str(record["relative_path"])).resolve()
         opposite = (opposite_base / str(record["relative_path"])).resolve()
-        if not opposite.is_relative_to(opposite_base):
-            raise ValueError("An opposite partition path escaped its expected root")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        if target.exists():
-            expected_sha = str(record.get("sha256", ""))
-            target_matches = target.stat().st_size == source.stat().st_size
-            if target_matches and expected_sha:
-                target_matches = _sha256(target) == expected_sha
-            if target_matches:
-                reused += 1
-                if expected_sha:
-                    target_hashes_verified += 1
-            else:
-                raise ValueError(
-                    f"Partition target already exists with different content: {target}"
-                )
-        else:
-            shutil.copy2(source, target)
-            copied += 1
-            expected_sha = str(record.get("sha256", ""))
-            if expected_sha:
-                if _sha256(target) != expected_sha:
-                    raise ValueError(
-                        f"Copied partition target failed SHA-256 verification: {target}"
-                    )
-                target_hashes_verified += 1
-            _emit(
-                progress_handler,
-                "partition_file_copied",
-                index=index,
-                total=len(materialized),
-                decision=record.get("final_decision"),
-                source_file=record["relative_path"],
+        if (
+            not source.is_relative_to(source_root)
+            or not target.is_relative_to(target_base)
+            or not opposite.is_relative_to(opposite_base)
+        ):
+            raise ValueError("A screening record resolved outside its expected root")
+        if target.exists() and not target.is_file():
+            raise ValueError(f"Partition target is not a file: {target}")
+        if opposite.exists() and not opposite.is_file():
+            raise ValueError(f"Opposite partition target is not a file: {opposite}")
+
+        expected_sha = str(record["sha256"]).strip().lower()
+        target_exists = target.is_file()
+        opposite_exists = opposite.is_file()
+        if target_exists and (
+            target.stat().st_size != source.stat().st_size
+            or _sha256(target) != expected_sha
+        ):
+            raise ValueError(
+                f"Partition target already exists with different content: {target}"
             )
-        if opposite.is_file():
-            expected_sha = str(record.get("sha256", ""))
-            if expected_sha and _sha256(opposite) != expected_sha:
+        if opposite_exists and (
+            opposite.stat().st_size != source.stat().st_size
+            or _sha256(opposite) != expected_sha
+        ):
+            raise ValueError(
+                f"Stale opposite partition has unexpected content: {opposite}"
+            )
+
+        if target_exists:
+            action = "reuse"
+        elif opposite_exists:
+            action = "move_opposite"
+        else:
+            action = "copy_source"
+            staged_copy_bytes += source.stat().st_size
+        plans.append(
+            {
+                "index": index,
+                "record": record,
+                "source": source,
+                "target": target,
+                "opposite": opposite,
+                "action": action,
+                "remove_duplicate_opposite": target_exists and opposite_exists,
+                "expected_sha": expected_sha,
+            }
+        )
+
+    free_bytes = shutil.disk_usage(target_root).free
+    if free_bytes < staged_copy_bytes + 256 * 1024 * 1024:
+        raise ValueError(
+            "Insufficient free space for reversible PDF partition copies: "
+            f"need at least {staged_copy_bytes + 256 * 1024 * 1024} bytes"
+        )
+
+    staging_root = Path(
+        tempfile.mkdtemp(prefix=".partition-staging-", dir=target_root)
+    ).resolve()
+    if not staging_root.is_relative_to(target_root):
+        raise ValueError("Partition staging path escaped its target root")
+    staged_root = staging_root / "new"
+    backup_root = staging_root / "backup"
+    applied: list[dict[str, Any]] = []
+    copied_from_source = 0
+    moved_between_partitions = 0
+    reused = 0
+    stale_opposite_removed = 0
+    cleanup_staging = True
+    try:
+        for plan in plans:
+            if plan["action"] != "copy_source":
+                continue
+            staged = staged_root / f"{plan['index']:06d}.bin"
+            staged.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(plan["source"], staged)
+            if (
+                staged.stat().st_size != plan["source"].stat().st_size
+                or _sha256(staged) != plan["expected_sha"]
+            ):
                 raise ValueError(
-                    f"Stale opposite partition has unexpected content: {opposite}"
+                    "Staged partition copy failed SHA-256 verification: "
+                    f"{plan['record']['relative_path']}"
                 )
-            opposite.unlink()
-            stale_opposite_removed += 1
+            plan["staged"] = staged
+
+        for plan in plans:
+            record = plan["record"]
+            target = plan["target"]
+            opposite = plan["opposite"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if plan["action"] == "reuse":
+                reused += 1
+                if plan["remove_duplicate_opposite"]:
+                    backup = backup_root / f"{plan['index']:06d}.bin"
+                    backup.parent.mkdir(parents=True, exist_ok=True)
+                    opposite.replace(backup)
+                    applied.append(
+                        {
+                            "kind": "restore_backup",
+                            "backup": backup,
+                            "opposite": opposite,
+                        }
+                    )
+                    stale_opposite_removed += 1
+            elif plan["action"] == "move_opposite":
+                opposite.replace(target)
+                applied.append(
+                    {
+                        "kind": "move_back",
+                        "target": target,
+                        "opposite": opposite,
+                    }
+                )
+                moved_between_partitions += 1
+                stale_opposite_removed += 1
+                _emit(
+                    progress_handler,
+                    "partition_file_moved",
+                    index=plan["index"],
+                    total=len(materialized),
+                    decision=record.get("final_decision"),
+                    source_file=record["relative_path"],
+                )
+            else:
+                plan["staged"].replace(target)
+                applied.append({"kind": "remove_target", "target": target})
+                copied_from_source += 1
+                _emit(
+                    progress_handler,
+                    "partition_file_copied",
+                    index=plan["index"],
+                    total=len(materialized),
+                    decision=record.get("final_decision"),
+                    source_file=record["relative_path"],
+                )
+    except Exception as exc:
+        rollback_errors: list[str] = []
+        for item in reversed(applied):
+            try:
+                if item["kind"] == "remove_target":
+                    if item["target"].is_file():
+                        item["target"].unlink()
+                elif item["kind"] == "move_back":
+                    if item["target"].is_file() and not item["opposite"].exists():
+                        item["opposite"].parent.mkdir(parents=True, exist_ok=True)
+                        item["target"].replace(item["opposite"])
+                else:
+                    if item["backup"].is_file() and not item["opposite"].exists():
+                        item["opposite"].parent.mkdir(parents=True, exist_ok=True)
+                        item["backup"].replace(item["opposite"])
+            except Exception as rollback_exc:
+                rollback_errors.append(str(rollback_exc))
+        message = f"Partition transaction failed and was rolled back: {exc}"
+        if rollback_errors:
+            cleanup_staging = False
+            message += "; rollback errors: " + " | ".join(rollback_errors)
+        raise RuntimeError(message) from exc
+    finally:
+        if cleanup_staging:
+            shutil.rmtree(staging_root, ignore_errors=True)
+
+    target_hashes_verified = len(plans)
     return {
         "partition_root": str(target_root),
         "passed_folder": str(passed_root),
@@ -644,10 +747,12 @@ def materialize_two_folders(
         "failed_including_review": sum(
             record.get("final_decision") != "keep" for record in materialized
         ),
-        "copied": copied,
+        "copied": copied_from_source + moved_between_partitions,
+        "copied_from_source": copied_from_source,
+        "moved_between_partitions": moved_between_partitions,
         "reused": reused,
         "stale_opposite_removed": stale_opposite_removed,
-        "missing_sources": failed,
+        "missing_sources": 0,
         "source_files_validated": source_validation["sources_validated"],
         "source_hashes_verified": source_validation["source_hashes_checked"],
         "target_hashes_verified": target_hashes_verified,

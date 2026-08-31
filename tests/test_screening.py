@@ -5,6 +5,7 @@ import json
 import tempfile
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
 import pymupdf
 
@@ -210,6 +211,69 @@ class PartitionTests(TestCase):
             self.assertTrue((root / "通过" / failed.name).is_file())
             self.assertFalse((root / "未通过" / failed.name).exists())
             self.assertEqual(2, refreshed["stale_opposite_removed"])
+
+    def test_partition_preflights_every_target_before_moving_any_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            passed = root / "pass.pdf"
+            failed = root / "fail.pdf"
+            _write_pdf(passed, ["Readable source. " * 20])
+            _write_pdf(failed, ["Readable source. " * 20])
+            materialize_two_folders(
+                records=[
+                    _partition_record(passed, "keep"),
+                    _partition_record(failed, "exclude"),
+                ],
+                pdf_dir=root,
+                partition_root=root,
+            )
+            corrupt = root / "未通过" / failed.name
+            corrupt.write_bytes(b"not the recorded PDF")
+
+            with self.assertRaisesRegex(ValueError, "unexpected content"):
+                materialize_two_folders(
+                    records=[
+                        _partition_record(passed, "exclude"),
+                        _partition_record(failed, "keep"),
+                    ],
+                    pdf_dir=root,
+                    partition_root=root,
+                )
+
+            self.assertTrue((root / "通过" / passed.name).is_file())
+            self.assertFalse((root / "未通过" / passed.name).exists())
+            self.assertEqual(b"not the recorded PDF", corrupt.read_bytes())
+
+    def test_partition_rolls_back_if_a_commit_move_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first = root / "first.pdf"
+            second = root / "second.pdf"
+            _write_pdf(first, ["First readable source. " * 20])
+            _write_pdf(second, ["Second readable source. " * 20])
+            records = [
+                _partition_record(first, "keep"),
+                _partition_record(second, "exclude"),
+            ]
+            original_replace = Path.replace
+
+            def flaky_replace(source: Path, target: Path) -> Path:
+                if Path(target).name == second.name:
+                    raise OSError("simulated commit failure")
+                return original_replace(source, target)
+
+            with patch.object(Path, "replace", new=flaky_replace):
+                with self.assertRaisesRegex(RuntimeError, "rolled back"):
+                    materialize_two_folders(
+                        records=records,
+                        pdf_dir=root,
+                        partition_root=root,
+                    )
+
+            self.assertTrue(first.is_file())
+            self.assertTrue(second.is_file())
+            self.assertFalse((root / "通过" / first.name).exists())
+            self.assertFalse((root / "未通过" / second.name).exists())
 
     def test_manifest_loader_returns_only_keep_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

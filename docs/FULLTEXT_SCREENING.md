@@ -78,13 +78,60 @@ The command only permits overrides of baseline `needs_review` records. A
 requires a complete, unique review set; writes a reviewed manifest, review
 overrides, Chinese CSV/lists/report, and preserves the baseline manifest.
 
+## Broad crystal-structure relevance review
+
+The strict decision above is an extractability gate, not a complete topic
+screen. A paper may be useful to a crystal-structure library even when it gives
+only one cell axis, a crystal-system or polymorph assignment, a structure model,
+or secondary crystallographic data. Keep those two questions separate.
+
+`scripts/build_structure_review_drafts.py` reopens every strict exclusion,
+scans every page locally with a wider recall-oriented vocabulary, separates
+body hits from detected References, and writes evidence drafts. Drafts are a
+review aid, not final decisions. A reviewer must verify that each positive fact
+is tied to a concrete material, sample, or phase.
+
+Apply a completed review set with:
+
+```powershell
+nanominer-k3 structure-review-apply `
+  --manifest C:\path\to\screening_manifest.reviewed.jsonl `
+  --reviews C:\path\to\agent_001.jsonl C:\path\to\agent_002.jsonl `
+  --output-dir C:\path\to\structure_reviewed `
+  --copy-partitions `
+  --pdf-dir C:\path\to\pdfs
+```
+
+Every baseline `exclude` must receive one unique review. A broad `keep` accepts
+explicit coordinates or Wyckoff data, a space group, complete or partial cell
+parameters, crystal system or phase assignment, structure determination/model/
+refinement, or diffraction indexing that establishes structure. Primary,
+secondary, imported, and mixed ownership are retained as separate metadata.
+Reference-list-only hits and generic crystallinity, crystallization kinetics,
+thermal analysis, XRD/WAXS measurement, morphology, lamellae, spherulites, or
+orientation without a crystallographic fact remain excluded.
+
+Review indices follow the baseline exclusions sorted by case-insensitive
+`relative_path`, independent of manifest row order. Each review record must
+include `source_sha256` matching that baseline PDF; this binds page evidence to
+the exact file bytes and prevents a review from being reused after a same-name
+PDF changes. Use a new, non-existing output directory for each application.
+
+The output manifest preserves the old result in `strict_final_decision`, places
+the broad library result in `topic_decision`, and mirrors `topic_decision` into
+`final_decision` so the existing batch allow-list and reversible two-folder
+materializer can be reused. This broader result is still not Gold.
+
 ## Safety and reuse
 
 `--copy-partitions` copies files and preserves the top-level originals. It
 checks every resolved source/target path, source size, source SHA-256, and
 available free space before the first copy. Missing or changed source PDFs stop
 the run. Existing targets are reused only when their byte size and recorded
-SHA-256 match.
+SHA-256 match. All target and opposite-folder copies are preflighted before any
+partition mutation. Cross-folder changes use a transaction journal and are
+rolled back on failure; report files are staged and published only after the
+partition update succeeds.
 Generated evidence stays in the project's `annotations/source_groups/` area,
 separate from source PDFs and Gold annotations.
 

@@ -116,6 +116,39 @@ requires a complete unique review set, and writes a separate reviewed manifest,
 Chinese report/CSV/lists, and auditable page evidence before refreshing the two
 copy-only folders.
 
+The strict gate above answers whether a paper already contains directly
+extractable primary crystallographic data. It is intentionally narrower than a
+high-recall literature-library screen. To retain every paper that explicitly
+discusses crystal structure or unit-cell information, first build local
+full-text evidence drafts and then apply completed structure-relevance reviews:
+
+```powershell
+.\.venv\Scripts\python scripts\build_structure_review_drafts.py `
+  --manifest "C:\path\to\screening_manifest.reviewed.jsonl" `
+  --pdf-dir "C:\path\to\pdfs" `
+  --output "C:\path\to\broad_evidence_index.jsonl" `
+  --ocr-sparse-pages
+
+.\.venv\Scripts\python -m nanominer_k3 structure-review-apply `
+  --manifest "C:\path\to\screening_manifest.reviewed.jsonl" `
+  --reviews "C:\path\to\review_part_1.jsonl" "C:\path\to\review_part_2.jsonl" `
+  --output-dir "C:\path\to\structure_reviewed" `
+  --copy-partitions --pdf-dir "C:\path\to\pdfs"
+```
+
+This second layer reviews every strict `exclude`. It accepts explicit partial
+cell data, crystal-system or phase assignments, structure models, and
+structure-bearing secondary/review content, while recording ownership and
+information level separately. Generic crystallinity, crystallization kinetics,
+DSC, XRD/WAXS measurements, morphology, or orientation without a material-bound
+crystallographic fact still do not pass. The output preserves the original
+strict result in `strict_final_decision` and uses `topic_decision` for the
+broader library partition. Exclusions are indexed by case-insensitive relative
+path order, every review carries the source PDF SHA-256, and the apply command
+rejects stale evidence or a pre-existing output directory. Final reports are
+published from a staging directory only after validation; two-folder updates
+preflight every target and roll back committed moves if an operation fails.
+
 Use the resulting allow-list for a later K3 batch:
 
 ```powershell
