@@ -99,6 +99,131 @@ class CifBuilderTests(TestCase):
             with self.assertRaisesRegex(CifBuildError, "SHA-256 mismatch"):
                 build_cif_from_spec(spec_path, root / "out")
 
+    def test_verifies_and_serializes_supporting_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec_path = self._spec(root)
+            attachment = root / "source-data.cif"
+            attachment.write_bytes(b"supporting source fixture")
+            attachment_sha256 = hashlib.sha256(attachment.read_bytes()).hexdigest()
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+            spec["supporting_sources"] = [
+                {
+                    "file_name": attachment.name,
+                    "file_path": str(attachment),
+                    "sha256": attachment_sha256,
+                }
+            ]
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+
+            result = build_cif_from_spec(spec_path, root / "out")
+
+            self.assertEqual(
+                "pass", result["supporting_source_checks"][0]["status"]
+            )
+            block = gemmi.cif.read_file(result["outputs"]["cif"]).sole_block()
+            self.assertEqual(
+                [attachment.name],
+                list(block.find_values("_nanominer_supporting_source_file")),
+            )
+
+    def test_rejects_supporting_source_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec_path = self._spec(root)
+            attachment = root / "source-data.cif"
+            attachment.write_bytes(b"supporting source fixture")
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+            spec["supporting_sources"] = [
+                {
+                    "file_name": attachment.name,
+                    "file_path": str(attachment),
+                    "sha256": "0" * 64,
+                }
+            ]
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                CifBuildError, "Supporting source SHA-256 mismatch"
+            ):
+                build_cif_from_spec(spec_path, root / "out")
+
+    def test_skips_contacts_between_exclusive_disorder_conformers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec_path = self._spec(root)
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+            spec["structure_id"] = "DISORDER_TEST"
+            spec["cell"] = {
+                "a": 10,
+                "b": 10,
+                "c": 10,
+                "alpha": 90,
+                "beta": 90,
+                "gamma": 90,
+            }
+            spec["space_group"] = {"reported": "P1", "build_setting": "P 1"}
+            spec["atom_sites"] = [
+                {
+                    "label": "C1A",
+                    "type_symbol": "C",
+                    "fract_x": 0.1,
+                    "fract_y": 0.1,
+                    "fract_z": 0.1,
+                    "occupancy": 0.4,
+                    "disorder_assembly": "A1",
+                    "disorder_group": "1",
+                },
+                {
+                    "label": "C1B",
+                    "type_symbol": "C",
+                    "fract_x": 0.101,
+                    "fract_y": 0.1,
+                    "fract_z": 0.1,
+                    "occupancy": 0.6,
+                    "disorder_assembly": "A1",
+                    "disorder_group": "2",
+                },
+                {
+                    "label": "O1",
+                    "type_symbol": "O",
+                    "fract_x": 0.3,
+                    "fract_y": 0.3,
+                    "fract_z": 0.3,
+                    "occupancy": 1.0,
+                },
+            ]
+            spec["expected_expanded_sites"] = 3
+            spec["expected_expanded_composition"] = {"C": 2, "O": 1}
+            spec["expected_occupancy_weighted_composition"] = {
+                "C": 1,
+                "O": 1,
+            }
+            spec["distance_expectations"] = []
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+
+            result = build_cif_from_spec(spec_path, root / "out")
+
+            self.assertEqual(
+                1, result["geometry"]["exclusive_disorder_pairs_skipped"]
+            )
+            block = gemmi.cif.read_file(result["outputs"]["cif"]).sole_block()
+            self.assertEqual(
+                ["A1", "A1", "."],
+                list(block.find_values("_atom_site_disorder_assembly")),
+            )
+
+    def test_requires_complete_disorder_metadata_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec_path = self._spec(root)
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+            spec["atom_sites"][0]["disorder_assembly"] = "A1"
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+
+            with self.assertRaisesRegex(CifBuildError, "supply disorder_assembly"):
+                build_cif_from_spec(spec_path, root / "out")
+
     def test_rejects_unknown_element_symbol(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

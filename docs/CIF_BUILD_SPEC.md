@@ -40,7 +40,9 @@ in a periodic crystal model and explain every reconstruction choice.
       "fract_z": 0.25,
       "occupancy": 1.0,
       "b_iso": 0.7,
-      "shared_site_group": "optional_disorder_group"
+      "shared_site_group": "optional_exact_mixed_site",
+      "disorder_assembly": "optional_conformational_disorder_assembly",
+      "disorder_group": "optional_alternative_state"
     }
   ],
   "model_scope": "reported_carbon_backbone_only"
@@ -52,6 +54,25 @@ the expected digest is still written to the CIF, but the validation report will
 say `not_checked_no_local_path`. If the file is available, a digest mismatch is
 a hard error.
 
+Native CIF, PDB, reflection, or other supporting files may be recorded and
+verified independently from the article PDF:
+
+```json
+{
+  "supporting_sources": [
+    {
+      "file_name": "100K.cif",
+      "file_path": "C:/local/path/100K.cif",
+      "sha256": "64 hexadecimal characters"
+    }
+  ]
+}
+```
+
+Each checked supporting file is serialized in a `_nanominer_supporting_source_*`
+loop and returned in `supporting_source_checks`. A digest mismatch is a hard
+error. `file_path` may be omitted when only the published digest is available.
+
 `reported` preserves the paper's symbol verbatim. `build_setting` must name the
 exact Gemmi setting used with the coordinates. They may differ, but the reason
 must be stated; this is common in historical Pnam/Pnma and nonstandard polymer
@@ -62,6 +83,13 @@ or a documented conversion is defensible; do not supply both. Two elements may
 share exactly the same crystallographic position only when both carry the same
 non-empty `shared_site_group` and their pairwise occupancies do not exceed 1.0.
 This represents a mixed average site, not two overlapping atoms.
+
+For mutually exclusive alternative conformers, supply both `disorder_assembly`
+and `disorder_group` on every affected atom. Atoms in different groups of the
+same assembly are serialized using the standard CIF disorder columns and their
+cross-conformer distances are excluded from geometry checks because those atoms
+never coexist. Contacts within one conformer remain fully validated. Atom labels
+must still be unique, for example `C1A` and `C1B`.
 
 ## Recommended validation assertions
 

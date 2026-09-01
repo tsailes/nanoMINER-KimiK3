@@ -36,6 +36,10 @@ def build_cif_from_spec(spec_path: Path, output_dir: Path) -> dict[str, Any]:
 
     _validate_spec(spec)
     source_check = _verify_source(spec["source"], resolved_spec.parent)
+    supporting_source_checks = [
+        _verify_supporting_source(source, resolved_spec.parent, index)
+        for index, source in enumerate(spec.get("supporting_sources", []))
+    ]
     space_group = gemmi.find_spacegroup_by_name(
         str(spec["space_group"]["build_setting"])
     )
@@ -45,8 +49,16 @@ def build_cif_from_spec(spec_path: Path, output_dir: Path) -> dict[str, Any]:
             f"{spec['space_group']['build_setting']!r}"
         )
 
-    cif_text = _render_cif(spec, space_group, source_check)
-    validation = _validate_generated_cif(spec, cif_text, space_group, source_check)
+    cif_text = _render_cif(
+        spec, space_group, source_check, supporting_source_checks
+    )
+    validation = _validate_generated_cif(
+        spec,
+        cif_text,
+        space_group,
+        source_check,
+        supporting_source_checks,
+    )
 
     destination = output_dir.expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -94,6 +106,24 @@ def _validate_spec(spec: Mapping[str, Any]) -> None:
     digest = str(source["sha256"]).lower()
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise CifBuildError("source.sha256 must be a 64-character hexadecimal digest")
+
+    supporting_sources = spec.get("supporting_sources", [])
+    if not isinstance(supporting_sources, list):
+        raise CifBuildError("supporting_sources must be a list")
+    for index, supporting_source in enumerate(supporting_sources):
+        if not isinstance(supporting_source, Mapping):
+            raise CifBuildError(f"supporting_sources[{index}] must be an object")
+        for required in ("file_name", "sha256"):
+            if not str(supporting_source.get(required, "")).strip():
+                raise CifBuildError(
+                    f"supporting_sources[{index}].{required} is required"
+                )
+        supporting_digest = str(supporting_source["sha256"]).lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", supporting_digest):
+            raise CifBuildError(
+                f"supporting_sources[{index}].sha256 must be a "
+                "64-character hexadecimal digest"
+            )
 
     cell = spec["cell"]
     if not isinstance(cell, Mapping):
@@ -163,6 +193,19 @@ def _validate_spec(spec: Mapping[str, Any]) -> None:
             raise CifBuildError(
                 f"atom_sites[{index}].shared_site_group cannot be blank"
             )
+        disorder_assembly = site.get("disorder_assembly")
+        disorder_group = site.get("disorder_group")
+        if (disorder_assembly is None) != (disorder_group is None):
+            raise CifBuildError(
+                f"atom_sites[{index}] must supply disorder_assembly and "
+                "disorder_group together"
+            )
+        for field, value in (
+            ("disorder_assembly", disorder_assembly),
+            ("disorder_group", disorder_group),
+        ):
+            if value is not None and not str(value).strip():
+                raise CifBuildError(f"atom_sites[{index}].{field} cannot be blank")
 
 
 def _finite_number(value: Any, field: str) -> float:
@@ -206,6 +249,40 @@ def _verify_source(source: Mapping[str, Any], spec_dir: Path) -> dict[str, Any]:
     }
 
 
+def _verify_supporting_source(
+    source: Mapping[str, Any], spec_dir: Path, index: int
+) -> dict[str, Any]:
+    expected = str(source["sha256"]).lower()
+    supplied_path = str(source.get("file_path", "")).strip()
+    if not supplied_path:
+        return {
+            "status": "not_checked_no_local_path",
+            "file_name": str(source["file_name"]),
+            "sha256_expected": expected,
+        }
+    path = Path(supplied_path).expanduser()
+    if not path.is_absolute():
+        path = spec_dir / path
+    path = path.resolve()
+    if not path.is_file():
+        raise CifBuildError(
+            f"Supporting source {index} does not exist: {path}"
+        )
+    actual = _sha256(path)
+    if actual != expected:
+        raise CifBuildError(
+            f"Supporting source SHA-256 mismatch for {path}: "
+            f"expected {expected}, got {actual}"
+        )
+    return {
+        "status": "pass",
+        "file_name": str(source["file_name"]),
+        "path": str(path),
+        "sha256_expected": expected,
+        "sha256_actual": actual,
+    }
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -218,6 +295,7 @@ def _render_cif(
     spec: Mapping[str, Any],
     space_group: gemmi.SpaceGroup,
     source_check: Mapping[str, Any],
+    supporting_source_checks: Sequence[Mapping[str, Any]],
 ) -> str:
     cell = spec["cell"]
     source = spec["source"]
@@ -275,6 +353,29 @@ def _render_cif(
     if notes:
         lines.append("_nanominer_reconstruction_notes " + gemmi.cif.quote(" | ".join(notes)))
 
+    if supporting_source_checks:
+        lines.extend(
+            [
+                "",
+                "loop_",
+                "_nanominer_supporting_source_file",
+                "_nanominer_supporting_source_sha256",
+                "_nanominer_supporting_source_hash_check",
+            ]
+        )
+        for source, check in zip(
+            spec.get("supporting_sources", []), supporting_source_checks
+        ):
+            lines.append(
+                " ".join(
+                    [
+                        gemmi.cif.quote(str(source["file_name"])),
+                        gemmi.cif.quote(str(source["sha256"]).lower()),
+                        gemmi.cif.quote(str(check["status"])),
+                    ]
+                )
+            )
+
     lines.extend(
         [
             "",
@@ -298,11 +399,23 @@ def _render_cif(
             "_atom_site_occupancy",
             "_atom_site_B_iso_or_equiv",
             "_atom_site_U_iso_or_equiv",
+            "_atom_site_disorder_assembly",
+            "_atom_site_disorder_group",
         ]
     )
     for site in spec["atom_sites"]:
         b_iso = "." if site.get("b_iso") is None else _format_number(site["b_iso"])
         u_iso = "." if site.get("u_iso") is None else _format_number(site["u_iso"])
+        disorder_assembly = (
+            "."
+            if site.get("disorder_assembly") is None
+            else gemmi.cif.quote(str(site["disorder_assembly"]))
+        )
+        disorder_group = (
+            "."
+            if site.get("disorder_group") is None
+            else gemmi.cif.quote(str(site["disorder_group"]))
+        )
         lines.append(
             " ".join(
                 [
@@ -314,6 +427,8 @@ def _render_cif(
                     _format_number(site.get("occupancy", 1.0), places=4),
                     b_iso,
                     u_iso,
+                    disorder_assembly,
+                    disorder_group,
                 ]
             )
         )
@@ -338,6 +453,7 @@ def _validate_generated_cif(
     cif_text: str,
     space_group: gemmi.SpaceGroup,
     source_check: Mapping[str, Any],
+    supporting_source_checks: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     try:
         document = gemmi.cif.read_string(cif_text)
@@ -461,6 +577,9 @@ def _validate_generated_cif(
             "status": "pass",
         },
         "source_check": dict(source_check),
+        "supporting_source_checks": [
+            dict(check) for check in supporting_source_checks
+        ],
         "space_group": {
             "reported": str(spec["space_group"]["reported"]),
             "build_setting": space_group.xhm(),
@@ -516,6 +635,16 @@ def _expand_sites(
                         if site.get("shared_site_group") is not None
                         else None
                     ),
+                    "disorder_assembly": (
+                        str(site["disorder_assembly"])
+                        if site.get("disorder_assembly") is not None
+                        else None
+                    ),
+                    "disorder_group": (
+                        str(site["disorder_group"])
+                        if site.get("disorder_group") is not None
+                        else None
+                    ),
                     "fract": coordinate,
                 }
             )
@@ -566,6 +695,7 @@ def _geometry_summary(
     pair_distances: dict[str, list[dict[str, Any]]] = {}
     all_pairs: list[dict[str, Any]] = []
     shared_position_pairs_skipped = 0
+    exclusive_disorder_pairs_skipped = 0
     for left_index, left in enumerate(expanded):
         for right in expanded[left_index + 1 :]:
             if (
@@ -574,6 +704,9 @@ def _geometry_summary(
                 and left.get("shared_site_group") == right.get("shared_site_group")
             ):
                 shared_position_pairs_skipped += 1
+                continue
+            if _mutually_exclusive_disorder(left, right):
+                exclusive_disorder_pairs_skipped += 1
                 continue
             distance = _periodic_distance(left["fract"], right["fract"], cell)
             key = "-".join(sorted((str(left["type_symbol"]), str(right["type_symbol"]))))
@@ -595,7 +728,21 @@ def _geometry_summary(
         "nearest_by_element_pair": nearest_by_pair,
         "ten_shortest_pairs": all_pairs[:10],
         "shared_position_pairs_skipped": shared_position_pairs_skipped,
+        "exclusive_disorder_pairs_skipped": exclusive_disorder_pairs_skipped,
     }
+
+
+def _mutually_exclusive_disorder(
+    left: Mapping[str, Any], right: Mapping[str, Any]
+) -> bool:
+    assembly = left.get("disorder_assembly")
+    return bool(
+        assembly
+        and assembly == right.get("disorder_assembly")
+        and left.get("disorder_group")
+        and right.get("disorder_group")
+        and left.get("disorder_group") != right.get("disorder_group")
+    )
 
 
 def _periodic_distance(
