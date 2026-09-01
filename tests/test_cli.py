@@ -79,3 +79,11 @@ class OutputBoundaryTests(TestCase):
         self.assertEqual([Path("part-1.jsonl"), Path("part-2.jsonl")], args.reviews)
         self.assertTrue(args.copy_partitions)
         self.assertFalse(hasattr(args, "prompt_key"))
+
+    def test_cif_build_command_needs_no_api_key_option(self) -> None:
+        args = build_parser().parse_args(
+            ["cif-build", "structure.json", "--output-dir", "draft-cifs"]
+        )
+        self.assertEqual(Path("structure.json"), args.spec)
+        self.assertEqual(Path("draft-cifs"), args.output_dir)
+        self.assertFalse(hasattr(args, "prompt_key"))

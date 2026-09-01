@@ -177,6 +177,32 @@ only for a text-only diagnostic run; scan-only PDFs require vision.
 Use `--prompt-key` to enter a key through a hidden terminal prompt instead of
 placing it in an environment variable or command-line argument.
 
+## Build a literature-derived draft CIF (no Kimi call)
+
+After a curator has transcribed a unit cell, a coordinate-compatible space-group
+setting, and at least one independent atom site into a JSON build spec, generate
+and validate a draft CIF locally:
+
+```powershell
+.\.venv\Scripts\python -m nanominer_k3 cif-build `
+  "C:\path\to\structure-build-spec.json" `
+  --output-dir "C:\path\to\annotations\source_groups\run\cif"
+```
+
+The command refuses to write into a `gold` directory. It verifies the source
+PDF SHA-256 when a local path is present, resolves the build-setting space group
+with Gemmi, expands its symmetry operations, checks expected multiplicities and
+composition (including occupancy-weighted composition when supplied), rejects
+overlapping atoms, checks optional bond-distance expectations, and parses the
+generated CIF again. It writes both `*.draft.cif` and a machine-readable
+`*.validation.json` report.
+
+The CIF records both the symbol printed in the paper and the setting actually
+used to build the coordinates. A passing report means the draft is internally
+consistent and reproducible; it does not turn a hydrogen-free, disorder-limited,
+or setting-interpreted historical model into a deposition-ready structure.
+See `docs/CIF_BUILD_SPEC.md` for the input contract and occupancy-aware example.
+
 For a directory pilot, use a separate fresh K3 conversation per article:
 
 ```powershell
@@ -192,10 +218,11 @@ opt-in and always read credentials from a hidden prompt.
 
 ## Scientific curation boundary
 
-The output is a provenance-first staging object, not a PE database row. The
-model does not generate record IDs, normalize crystal settings, declare CIF
-readiness, or promote records. A separate deterministic adapter and validation
-step must map reviewed candidates into the project's schemas.
+K3 extraction output is a provenance-first staging object, not a PE database
+row. The model does not generate record IDs, normalize crystal settings,
+declare CIF readiness, or promote records. The local `cif-build` adapter handles
+only curator-reviewed build specs and keeps every interpretation explicit; main
+annotation-table promotion remains a separate human decision.
 
 Recommended first regression set:
 

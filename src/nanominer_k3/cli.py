@@ -10,6 +10,7 @@ from pathlib import Path
 from openai import OpenAI
 
 from .batch import run_batch
+from .cif_builder import build_cif_from_spec
 from .config import ConfigurationError, KimiSettings
 from .documents import DocumentCorpus, PdfDocument
 from .pipeline import run_extraction
@@ -129,6 +130,14 @@ def build_parser() -> argparse.ArgumentParser:
     structure_review_apply.add_argument("--pdf-dir", type=Path)
     structure_review_apply.add_argument("--partition-root", type=Path)
     structure_review_apply.set_defaults(func=_structure_review_apply)
+
+    cif_build = subparsers.add_parser(
+        "cif-build",
+        help="Build and locally validate a provenance-bearing draft CIF",
+    )
+    cif_build.add_argument("spec", type=Path)
+    cif_build.add_argument("--output-dir", type=Path, required=True)
+    cif_build.set_defaults(func=_cif_build)
     return parser
 
 
@@ -237,6 +246,15 @@ def _structure_review_apply(args: argparse.Namespace) -> int:
         copy_partitions=args.copy_partitions,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _cif_build(args: argparse.Namespace) -> int:
+    output_dir = args.output_dir.expanduser().resolve()
+    if "gold" in {part.casefold() for part in output_dir.parts}:
+        raise ConfigurationError("Draft CIF output must not write into a gold directory")
+    result = build_cif_from_spec(args.spec, output_dir)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 

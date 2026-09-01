@@ -11,6 +11,7 @@ requires-python = ">=3.10,<3.14"
 license = {text = "License status inherited from upstream; verify before redistribution"}
 authors = [{name = "nanoMINER reproduction contributors"}]
 dependencies = [
+  "gemmi>=0.7,<1",
   "jsonschema>=4.23,<5",
   "openai>=1.109,<2",
   "pymupdf>=1.24,<2",
