@@ -39,7 +39,8 @@ in a periodic crystal model and explain every reconstruction choice.
       "fract_y": 0.935,
       "fract_z": 0.25,
       "occupancy": 1.0,
-      "b_iso": 0.7
+      "b_iso": 0.7,
+      "shared_site_group": "optional_disorder_group"
     }
   ],
   "model_scope": "reported_carbon_backbone_only"
@@ -56,8 +57,11 @@ exact Gemmi setting used with the coordinates. They may differ, but the reason
 must be stated; this is common in historical Pnam/Pnma and nonstandard polymer
 settings.
 
-`occupancy` defaults to 1.0. `b_iso` is optional and must only be included when
-the source value or a documented conversion is defensible.
+`occupancy` defaults to 1.0. Use either `b_iso` or `u_iso` when the source value
+or a documented conversion is defensible; do not supply both. Two elements may
+share exactly the same crystallographic position only when both carry the same
+non-empty `shared_site_group` and their pairwise occupancies do not exceed 1.0.
+This represents a mixed average site, not two overlapping atoms.
 
 ## Recommended validation assertions
 

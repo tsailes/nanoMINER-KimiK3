@@ -144,10 +144,25 @@ def _validate_spec(spec: Mapping[str, Any]) -> None:
             raise CifBuildError(
                 f"atom_sites[{index}].occupancy must be in the interval (0, 1]"
             )
-        if site.get("b_iso") is not None:
-            b_iso = _finite_number(site["b_iso"], f"atom_sites[{index}].b_iso")
-            if b_iso < 0:
-                raise CifBuildError(f"atom_sites[{index}].b_iso cannot be negative")
+        if site.get("b_iso") is not None and site.get("u_iso") is not None:
+            raise CifBuildError(
+                f"atom_sites[{index}] must use either b_iso or u_iso, not both"
+            )
+        for displacement in ("b_iso", "u_iso"):
+            if site.get(displacement) is not None:
+                value = _finite_number(
+                    site[displacement], f"atom_sites[{index}].{displacement}"
+                )
+                if value < 0:
+                    raise CifBuildError(
+                        f"atom_sites[{index}].{displacement} cannot be negative"
+                    )
+        if site.get("shared_site_group") is not None and not str(
+            site["shared_site_group"]
+        ).strip():
+            raise CifBuildError(
+                f"atom_sites[{index}].shared_site_group cannot be blank"
+            )
 
 
 def _finite_number(value: Any, field: str) -> float:
@@ -282,10 +297,12 @@ def _render_cif(
             "_atom_site_fract_z",
             "_atom_site_occupancy",
             "_atom_site_B_iso_or_equiv",
+            "_atom_site_U_iso_or_equiv",
         ]
     )
     for site in spec["atom_sites"]:
         b_iso = "." if site.get("b_iso") is None else _format_number(site["b_iso"])
+        u_iso = "." if site.get("u_iso") is None else _format_number(site["u_iso"])
         lines.append(
             " ".join(
                 [
@@ -296,6 +313,7 @@ def _render_cif(
                     _format_fraction(site["fract_z"]),
                     _format_number(site.get("occupancy", 1.0), places=4),
                     b_iso,
+                    u_iso,
                 ]
             )
         )
@@ -493,6 +511,11 @@ def _expand_sites(
                     "symmetry_index": sym_index,
                     "type_symbol": str(site["type_symbol"]),
                     "occupancy": float(site.get("occupancy", 1.0)),
+                    "shared_site_group": (
+                        str(site["shared_site_group"])
+                        if site.get("shared_site_group") is not None
+                        else None
+                    ),
                     "fract": coordinate,
                 }
             )
@@ -500,6 +523,16 @@ def _expand_sites(
     for left_index, left in enumerate(expanded):
         for right in expanded[left_index + 1 :]:
             if _same_fractional(left["fract"], right["fract"]):
+                left_group = left.get("shared_site_group")
+                right_group = right.get("shared_site_group")
+                if left_group and left_group == right_group:
+                    combined = float(left["occupancy"]) + float(right["occupancy"])
+                    if combined > 1.0 + 1e-8:
+                        raise CifBuildError(
+                            f"Shared-site occupancies exceed 1.0 for group {left_group}: "
+                            f"{left['label']} + {right['label']} = {combined}"
+                        )
+                    continue
                 raise CifBuildError(
                     "Two asymmetric-unit sites expand onto the same position: "
                     f"{left['label']} and {right['label']}"
@@ -532,8 +565,16 @@ def _geometry_summary(
         raise CifBuildError("At least two symmetry-expanded atoms are required")
     pair_distances: dict[str, list[dict[str, Any]]] = {}
     all_pairs: list[dict[str, Any]] = []
+    shared_position_pairs_skipped = 0
     for left_index, left in enumerate(expanded):
         for right in expanded[left_index + 1 :]:
+            if (
+                _same_fractional(left["fract"], right["fract"])
+                and left.get("shared_site_group")
+                and left.get("shared_site_group") == right.get("shared_site_group")
+            ):
+                shared_position_pairs_skipped += 1
+                continue
             distance = _periodic_distance(left["fract"], right["fract"], cell)
             key = "-".join(sorted((str(left["type_symbol"]), str(right["type_symbol"]))))
             record = {
@@ -553,6 +594,7 @@ def _geometry_summary(
         "nearest_pair": all_pairs[0],
         "nearest_by_element_pair": nearest_by_pair,
         "ten_shortest_pairs": all_pairs[:10],
+        "shared_position_pairs_skipped": shared_position_pairs_skipped,
     }
 
 

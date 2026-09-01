@@ -109,3 +109,65 @@ class CifBuilderTests(TestCase):
 
             with self.assertRaisesRegex(CifBuildError, "recognized element"):
                 build_cif_from_spec(spec_path, root / "out")
+
+    def test_allows_complementary_mixed_occupancy_on_one_site(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec_path = self._spec(root)
+            spec = json.loads(spec_path.read_text(encoding="utf-8"))
+            spec["structure_id"] = "MIXED_SITE_TEST"
+            spec["cell"] = {
+                "a": 10,
+                "b": 10,
+                "c": 10,
+                "alpha": 90,
+                "beta": 90,
+                "gamma": 90,
+            }
+            spec["space_group"] = {"reported": "P1", "build_setting": "P 1"}
+            spec["atom_sites"] = [
+                {
+                    "label": "Li1",
+                    "type_symbol": "Li",
+                    "fract_x": 0,
+                    "fract_y": 0,
+                    "fract_z": 0,
+                    "occupancy": 0.25,
+                    "shared_site_group": "M1",
+                },
+                {
+                    "label": "Na1",
+                    "type_symbol": "Na",
+                    "fract_x": 0,
+                    "fract_y": 0,
+                    "fract_z": 0,
+                    "occupancy": 0.75,
+                    "shared_site_group": "M1",
+                },
+                {
+                    "label": "O1",
+                    "type_symbol": "O",
+                    "fract_x": 0.2,
+                    "fract_y": 0.2,
+                    "fract_z": 0.2,
+                    "occupancy": 1.0,
+                    "u_iso": 0.02,
+                },
+            ]
+            spec["expected_expanded_sites"] = 3
+            spec["expected_expanded_composition"] = {"Li": 1, "Na": 1, "O": 1}
+            spec["expected_occupancy_weighted_composition"] = {
+                "Li": 0.25,
+                "Na": 0.75,
+                "O": 1,
+            }
+            spec["distance_expectations"] = []
+            spec_path.write_text(json.dumps(spec), encoding="utf-8")
+
+            result = build_cif_from_spec(spec_path, root / "out")
+
+            self.assertEqual(1, result["geometry"]["shared_position_pairs_skipped"])
+            self.assertEqual(
+                {"Li": 0.25, "Na": 0.75, "O": 1.0},
+                result["atom_sites"]["occupancy_weighted_composition"],
+            )
